@@ -1,0 +1,21 @@
+# Git & IDE
+.git
+.gitignore
+.vscode
+.idea
+
+# Python cache & tests
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+tests/
+.coverage
+htmlcov/
+
+# Archives & Temporary files
+*.zip
+*.tar.gz
+scratch/
+*.log

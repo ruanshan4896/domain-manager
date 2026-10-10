@@ -1,0 +1,12 @@
+services:
+  domain-renewal-tracker:
+    build: .
+    container_name: domain-renewal-tracker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./service_account.json:/app/service_account.json:ro
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
