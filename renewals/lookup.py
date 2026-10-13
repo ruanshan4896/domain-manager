@@ -200,7 +200,7 @@ def parse_whois_text(text: str, domain: str) -> Tuple[Optional[date], Optional[s
 
     # 1. Search for explicit expiration date
     exp_patterns = [
-        r'(?i)(?:Registry Expiry Date|Registrar Registration Expiration Date|Registry Expiry|Expir\w+ Date|Expiration Time|paid-till|expires on|expires|Expiry Date|Expiry|Valid Until)\s*:\s*([^\r\n<]+)',
+        r'(?i)(?:Registry Expiry Date|Registrar Registration Expiration Date|Registry Expiry|Expir\w+ Date|Expiration Time|paid-till|expires on|expires|Expiry Date|Expiry|Valid Until|Fecha de Caducidad|Fecha de expiraci[oó]n|Caducidad)\s*:\s*([^\r\n<]+)',
         r'(?i)(?:renewal date|expire-date|expire)\s*:\s*([^\r\n<]+)',
     ]
     for pat in exp_patterns:
@@ -313,10 +313,15 @@ def extract_registrar_name(entities: List[Dict[str, Any]]) -> Optional[str]:
                 for item in vcard[1]:
                     if isinstance(item, list) and len(item) > 3 and item[0] == "fn":
                         return str(item[3]).strip()
-            if entity.get("handle"):
-                return str(entity.get("handle")).strip()
             if entity.get("name"):
-                return str(entity.get("name")).strip()
+                name = str(entity.get("name")).strip()
+                if name:
+                    return name
+            if entity.get("handle"):
+                handle = str(entity.get("handle")).strip()
+                if handle == "1068":
+                    return "Namecheap"
+                return handle
 
     return None
 
@@ -342,12 +347,19 @@ def lookup_domain_rdap(domain: str, timeout: int = 10) -> Tuple[Optional[date], 
     if not cleaned or "." not in cleaned:
         return None, None
 
-    endpoints = [
+    endpoints: List[str] = []
+
+    # Dedicated RDAP servers for specific TLDs
+    if cleaned.endswith(".ws"):
+        endpoints.append(f"https://rdap.website.ws/domain/{cleaned}")
+
+    endpoints.extend([
         f"https://rdap.org/domain/{cleaned}",
+        f"https://who-dat.as93.net/{cleaned}",
         f"https://rdap.cloudflare.com/client/v4/rdap/domain/{cleaned}",
         f"https://rdap.identitydigital.services/rdap/domain/{cleaned}",
         f"https://rdap.sidn.nl/domain/{cleaned}",
-    ]
+    ])
 
     parts = cleaned.split(".")
     if len(parts) >= 3:
@@ -368,6 +380,32 @@ def lookup_domain_rdap(domain: str, timeout: int = 10) -> Tuple[Optional[date], 
                 data = response.json()
                 expiry_date = extract_expiry_date(data.get("events", []))
                 registrar = extract_registrar_name(data.get("entities", []))
+
+                # Handle who-dat gateway structure
+                if not expiry_date and "dates" in data and isinstance(data["dates"], dict):
+                    exp_val = data["dates"].get("expires")
+                    if exp_val:
+                        expiry_date = parse_expiry_date(str(exp_val))
+
+                if not registrar and "registrar" in data and isinstance(data["registrar"], dict):
+                    reg_obj = data["registrar"]
+                    if reg_obj.get("ianaId") == "1068" or "namecheap" in str(reg_obj.get("whoisServer", "")).lower():
+                        registrar = "Namecheap"
+                    elif reg_obj.get("name"):
+                        registrar = str(reg_obj["name"]).strip()
+                    elif reg_obj.get("whoisServer"):
+                        registrar = str(reg_obj["whoisServer"]).strip()
+
+                # Handle port43 hint in RDAP
+                if not registrar and data.get("port43"):
+                    p43 = str(data["port43"]).lower()
+                    if "namecheap" in p43:
+                        registrar = "Namecheap"
+                    elif "cloudflare" in p43:
+                        registrar = "Cloudflare"
+                    elif "godaddy" in p43:
+                        registrar = "GoDaddy"
+
                 if expiry_date:
                     return expiry_date, registrar
         except Exception as exc:

@@ -168,14 +168,19 @@ class RenewalService:
                         registrar,
                     )
                 else:
+                    if domain.endswith(".es"):
+                        msg = "Vui lòng tự nhập ngày (Red.es chặn WHOIS tự do)"
+                    else:
+                        msg = "Chưa tra cứu được (vui lòng tự nhập ngày)"
                     logger.warning(
-                        "Could not resolve expiration date for '%s' via RDAP/WHOIS. Please enter date manually.",
+                        "Could not resolve expiration date for '%s'. %s",
                         domain,
+                        msg,
                     )
                     update = RenewalRowUpdate(
                         row_index=row.row_index,
                         expiry_date_str="",
-                        days_left_str="Chưa tra cứu được (vui lòng tự nhập ngày)",
+                        days_left_str=msg,
                     )
                     updates.append(update)
                     continue
