@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class StatusCodeService:
-    """Service managing periodic HTTP statuscode checks and Telegram alerts."""
+    """Service managing periodic HTTP statuscode checks and Google Sheets updates."""
 
     def __init__(
         self,
@@ -39,39 +39,17 @@ class StatusCodeService:
             sheet_name=config.google_sheet_name,
             worksheet_name=getattr(config, "google_statuscode_worksheet_name", "Statuscode"),
         )
-        self.notifier = notifier or TelegramNotifier(
-            bot_token=config.telegram_bot_token,
-            chat_id=config.telegram_chat_id,
-        )
+        self.notifier = notifier
         self.state_file = Path(state_file)
         self.max_workers = max_workers
 
-    def _load_state(self) -> Dict[str, Dict[str, Any]]:
-        """Load persistent error alert states from JSON file."""
-        if not self.state_file.exists():
-            return {}
-        try:
-            with open(self.state_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as exc:
-            logger.warning("Error loading statuscode state from %s: %s", self.state_file, exc)
-            return {}
-
-    def _save_state(self, state: Dict[str, Dict[str, Any]]) -> None:
-        """Save persistent error alert states to JSON file."""
-        try:
-            with open(self.state_file, "w", encoding="utf-8") as f:
-                json.dump(state, f, indent=2, ensure_ascii=False)
-        except Exception as exc:
-            logger.error("Error saving statuscode state to %s: %s", self.state_file, exc)
-
     def process_statuscode_cycle(self) -> int:
-        """Perform concurrent HTTP status checks across all domains in Statuscode worksheet.
+        """Perform concurrent HTTP status checks across all domains and update Google Sheet.
 
         Returns:
-            int: Number of new error alerts sent to Telegram.
+            int: Number of rows updated on Google Sheet.
         """
-        logger.info("=== Starting Domain HTTP Statuscode Check Cycle ===")
+        logger.info("=== Starting Domain HTTP Statuscode Check & Sync Cycle ===")
         rows = self.sheet_manager.fetch_all_rows()
         if not rows:
             logger.info("No rows found in Statuscode sheet or failed to fetch.")
@@ -83,10 +61,7 @@ class StatusCodeService:
         if not active_rows:
             return 0
 
-        state = self._load_state()
         updates: List[StatusCodeRowUpdate] = []
-        alerts_sent = 0
-        state_changed = False
 
         # Run HTTP checks concurrently
         check_results: Dict[str, str] = {}
@@ -111,42 +86,11 @@ class StatusCodeService:
             if row.status_code != code:
                 updates.append(StatusCodeRowUpdate(row_index=row.row_index, status_code=code))
 
-            domain_state = state.get(domain, {})
-            is_alerted = domain_state.get("is_alerted", False)
-
-            # If status represents an error (4xx, 5xx, or network failure)
-            if is_error_status(code):
-                # Alert only once when error is first detected; do not alert again while still in error state
-                if not is_alerted:
-                    logger.warning("Domain '%s' reported error status code: %s", domain, code)
-                    escaped_domain = html.escape(domain)
-                    message = (
-                        f"⚠️ <b>Cảnh báo lỗi HTTP:</b> Tên miền <b>{escaped_domain}</b> "
-                        f"phát hiện trả về mã lỗi <b>{code}</b>! Vui lòng kiểm tra lại dịch vụ."
-                    )
-                    sent = self.notifier.send_message(message)
-                    if sent:
-                        alerts_sent += 1
-                        domain_state["is_alerted"] = True
-                        domain_state["last_alert_code"] = code
-                        domain_state["last_alert_time"] = datetime.now(timezone.utc).isoformat()
-                        state[domain] = domain_state
-                        state_changed = True
-            else:
-                # Domain is healthy (2xx, 3xx) -> reset state if it previously alerted an error
-                if is_alerted:
-                    logger.info("Domain '%s' recovered with status %s. Resetting alert state.", domain, code)
-                    domain_state["is_alerted"] = False
-                    domain_state["last_alert_code"] = ""
-                    domain_state["recovered_time"] = datetime.now(timezone.utc).isoformat()
-                    state[domain] = domain_state
-                    state_changed = True
-
         if updates:
             self.sheet_manager.batch_update_rows(updates)
+            logger.info("Updated %d domain status code(s) on Google Sheet.", len(updates))
+        else:
+            logger.info("All domain status codes are up to date on Google Sheet.")
 
-        if state_changed:
-            self._save_state(state)
-
-        logger.info("Statuscode check cycle finished. Sent %d new error alert(s).", alerts_sent)
-        return alerts_sent
+        logger.info("Statuscode check cycle finished.")
+        return len(updates)

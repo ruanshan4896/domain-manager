@@ -1,5 +1,5 @@
 # Domain Manager 🚀
-> Hệ thống backend Python tự động theo dõi thời hạn tên miền 24/7, tự động tra cứu WHOIS/RDAP, đồng bộ hai chiều với Google Sheets và gửi cảnh báo hết hạn qua Telegram Bot kèm tag người sở hữu và nút liên kết trực tiếp tới nhà đăng ký.
+> Hệ thống backend Python tự động theo dõi thời hạn tên miền và kiểm tra HTTP Status Code 24/7, tự động tra cứu WHOIS/RDAP và đồng bộ trực tiếp lên Google Sheets (hoạt động độc lập, tập trung hiển thị trực quan trên Google Sheet, không gửi thông báo Telegram).
 
 ---
 
@@ -10,25 +10,25 @@ domain-manager/
 ├── core/                       # ⚙️ Tầng cấu hình và tiện ích dùng chung
 │   ├── __init__.py
 │   ├── config.py               # Cấu hình môi trường (.env), validation, logging
-│   └── notifier.py             # Telegram Notifier gửi thông báo nhắc hạn kèm tag tên
+│   └── notifier.py             # Tiện ích gửi thông báo (tuỳ chọn)
 │
 ├── renewals/                   # 🔔 Module Quản lý Gia Hạn Tên Miền
 │   ├── __init__.py
 │   ├── lookup.py               # Engine tra cứu RDAP ICANN/CentralNic & Socket WHOIS / WHOIS.com
 │   ├── sheet.py                # Quản lý tab Domain_Renewals trên Google Sheets (Batch API)
-│   └── service.py              # Xử lý chu kỳ kiểm tra gia hạn & phân loại Alert Stages
+│   └── service.py              # Xử lý chu kỳ kiểm tra gia hạn & cập nhật Google Sheet
 │
-├── statuscode/                 # 🌐 Module Kiểm Tra HTTP Status Code (Mới)
+├── statuscode/                 # 🌐 Module Kiểm Tra HTTP Status Code
 │   ├── __init__.py
 │   ├── checker.py              # Kiểm tra mã HTTP trực tiếp (không follow redirects)
 │   ├── sheet.py                # Quản lý tab Statuscode trên Google Sheets
-│   └── service.py              # Chu kỳ kiểm tra 10 phút & chống spam cảnh báo Telegram
+│   └── service.py              # Chu kỳ kiểm tra 10 phút & cập nhật Google Sheet
 │
 ├── main.py                     # 🚀 Daemon Orchestrator điều phối chạy ngầm 24/7 hoặc chạy lẻ
 ├── Dockerfile                  # Dockerfile tối ưu (Python 3.12 slim, timezone Asia/Ho_Chi_Minh)
 ├── docker-compose.yml          # Cấu hình Docker Compose cho VPS aaPanel
 ├── requirements.txt            # Danh sách thư viện phụ thuộc
-├── service_account.json        # Google Cloud Service Account credentials (tự cung cấp)
+├── service_account.json        # Google Cloud Service Account credentials (bắt buộc)
 ├── .env.example                # File mẫu cấu hình môi trường
 └── .env                        # Biến môi trường hệ thống (bảo mật, không commit lên git)
 ```
@@ -38,16 +38,13 @@ domain-manager/
 ## 📌 Tính Năng Nổi Bật
 
 ### 1. Quản Lý Gia Hạn Tên Miền (Mỗi ngày 1 lần)
-- 🔍 **Tra cứu tự động (Auto-Lookup):** Nhập tên miền vào tab `Domain_Renewals` (Cột A), bot tự tra cứu ngày hết hạn qua **RDAP (ICANN / CentralNic)**, **Socket WHOIS Port 43** & **WHOIS.com**. Hỗ trợ đặc biệt cho ccTLD như `.ws`, v.v.
-- 🔔 **Cảnh báo đúng lúc (2 mốc chuẩn):**
-  - **Lần 1:** Đúng ngày hết hạn (0 ngày còn lại).
-  - **Lần 2:** Ngày hôm sau để nhắc nhở khẩn cấp (quá hạn 1 ngày).
-  - **Nội dung thông báo:** `Tên miền {domain} đã hết hạn, @daudepzai gia hạn giúp anh với em`
+- 🔍 **Tra cứu tự động (Auto-Lookup):** Nhập tên miền vào tab `Domain_Renewals` (Cột A), hệ thống tự tra cứu ngày hết hạn qua **RDAP (ICANN / CentralNic)**, **Socket WHOIS Port 43** & **WHOIS.com**. Hỗ trợ đặc biệt cho ccTLD như `.ws`, v.v.
+- ⚡ **Tự tính ngày còn lại (Days Left):** Cột C tự động hiển thị số ngày còn lại (ví dụ: `15 ngày` hoặc `Quá hạn 1 ngày`).
 
 ### 2. Giám Sát HTTP Status Code (Mỗi 10 phút 1 lần)
 - 🌐 **Kiểm tra trạng thái HTTP:** Ping kiểm tra mã phản hồi trực tiếp (không chuyển hướng để ghi nhận đúng mã ban đầu như `200`, `301`, `403`, `404`, `5xx`).
-- ⚡ **Cập nhật gọn gàng vào Google Sheet:** Chỉ hiển thị mã số (ví dụ: `200`, `301`, `404`) ở Cột B tab `Statuscode`.
-- 🛡️ **Cảnh báo thông minh & Chống Spam:** Khi tên miền gặp lỗi (4xx, 5xx, timeout), bot gửi cảnh báo Telegram ngay lập tức. **Nếu đã cảnh báo thì không cảnh báo lặp lại** trong các chu kỳ 10 phút tiếp theo. Khi website hoạt động bình thường trở lại (2xx/3xx), trạng thái sẽ tự động reset.
+- ⚡ **Cập nhật gọn gàng vào Google Sheet:** Tự động ghi mã số (ví dụ: `200`, `301`, `404`, `500`) vào Cột B tab `Statuscode`.
+- 🔇 **Không phiền toái:** Toàn bộ dữ liệu hiển thị tập trung trên Google Sheet, không gửi tin nhắn Telegram.
 
 ---
 
@@ -106,7 +103,7 @@ python main.py --validate-only
      ```bash
      cp .env.example .env
      ```
-   - Chỉnh sửa thông tin Telegram Bot token, Chat ID, Google Sheet Name trong `.env`.
+   - Chỉnh sửa thông tin Google Sheet Name trong `.env`.
    - Upload file `service_account.json` của Google Cloud vào thư mục `domain-manager`.
 
 3. **Khởi chạy container với Docker Compose:**

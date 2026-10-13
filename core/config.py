@@ -27,10 +27,10 @@ def parse_alert_days(raw_str: str) -> List[int]:
 class Config:
     """Application configuration container."""
 
-    telegram_bot_token: str
-    telegram_chat_id: str
-    google_service_account_file: str
-    google_sheet_name: str
+    google_service_account_file: str = "service_account.json"
+    google_sheet_name: str = "Quản Lý Domain"
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
     log_level: str = "INFO"
     google_renewal_worksheet_name: str = "Domain_Renewals"
     renewal_check_interval_seconds: int = 86400
@@ -40,16 +40,8 @@ class Config:
 
     @property
     def is_configured(self) -> bool:
-        """Check if essential API keys and tokens are provided."""
-        placeholders = {
-            "your_bot_token",
-            "your_chat_id",
-            "",
-        }
-        return bool(
-            self.telegram_bot_token not in placeholders
-            and self.telegram_chat_id not in placeholders
-        )
+        """Check if essential Google Sheets configuration is provided."""
+        return bool(self.google_sheet_name)
 
 
 def load_config(env_path: Optional[str | Path] = None) -> Config:
@@ -124,12 +116,6 @@ def validate_config(config: Config, check_service_account_file: bool = True) -> 
         List[str]: List of validation error messages. Empty if valid.
     """
     errors: List[str] = []
-
-    if not config.telegram_bot_token or config.telegram_bot_token == "your_bot_token":
-        errors.append("TELEGRAM_BOT_TOKEN is missing or using default placeholder.")
-
-    if not config.telegram_chat_id or config.telegram_chat_id == "your_chat_id":
-        errors.append("TELEGRAM_CHAT_ID is missing or using default placeholder.")
 
     if not config.google_sheet_name:
         errors.append("GOOGLE_SHEET_NAME is missing.")

@@ -142,6 +142,11 @@ def parse_args() -> argparse.Namespace:
         help="Run a single statuscode check cycle and exit",
     )
     parser.add_argument(
+        "--check-renewals",
+        action="store_true",
+        help="Run a single domain renewal check cycle and exit",
+    )
+    parser.add_argument(
         "--test-telegram",
         action="store_true",
         help="Send a test notification to Telegram and exit",
@@ -178,6 +183,9 @@ def main() -> None:
     orchestrator = AppOrchestrator(config)
 
     if args.test_telegram:
+        if not config.telegram_bot_token or not config.telegram_chat_id:
+            logger.info("Telegram notification is disabled or not configured.")
+            sys.exit(0)
         logger.info("Testing Telegram connection...")
         success = orchestrator.notifier.send_message(
             "🔔 <b>Domain Manager:</b> Kiểm tra kết nối Telegram Bot thành công! 🚀"
@@ -193,6 +201,12 @@ def main() -> None:
         logger.info("Running single HTTP statuscode check (--check-statuscode)...")
         orchestrator.process_statuscode_cycle()
         logger.info("Statuscode check finished.")
+        return
+
+    if args.check_renewals:
+        logger.info("Running single domain renewal check (--check-renewals)...")
+        orchestrator.process_renewal_cycle()
+        logger.info("Renewal check finished.")
         return
 
     if args.once:

@@ -72,55 +72,35 @@ def test_statuscode_row_update_payload():
     assert payload["values"] == [["500"]]
 
 
-def test_statuscode_service_alert_deduplication(tmp_path):
-    """Verify that an error alert is sent once and NOT repeated if already alerted."""
-    state_file = tmp_path / "statuscode_state.json"
-
+def test_statuscode_service_updates_sheet_without_telegram():
+    """Verify that StatusCodeService updates Google Sheet and sends NO Telegram messages."""
     config = Config(
-        telegram_bot_token="fake_token",
-        telegram_chat_id="fake_chat",
         google_service_account_file="nonexistent.json",
         google_sheet_name="Quản Lý Domain",
     )
 
     mock_sheet_manager = MagicMock()
     mock_notifier = MagicMock()
-    mock_notifier.send_message.return_value = True
 
-    # Row with domain returning 500 error
     mock_sheet_manager.fetch_all_rows.return_value = [
-        StatusCodeRow(row_index=2, domain="broken-site.com", status_code="")
+        StatusCodeRow(row_index=2, domain="mysite.com", status_code=""),
+        StatusCodeRow(row_index=3, domain="#ignored.com", status_code=""),
     ]
 
     service = StatusCodeService(
         config=config,
         sheet_manager=mock_sheet_manager,
         notifier=mock_notifier,
-        state_file=str(state_file),
     )
 
-    with patch("statuscode.service.check_domain_status", return_value="500"):
-        # Cycle 1: should send alert
-        alerts_sent = service.process_statuscode_cycle()
-        assert alerts_sent == 1
-        assert mock_notifier.send_message.call_count == 1
-
-        # Check state file recorded error
-        assert state_file.exists()
-        state = json.loads(state_file.read_text(encoding="utf-8"))
-        assert state["broken-site.com"]["is_alerted"] is True
-        assert state["broken-site.com"]["last_alert_code"] == "500"
-
-    # Cycle 2 (10 minutes later): error fluctuates to 502 or 500 -> should NOT alert again!
-    with patch("statuscode.service.check_domain_status", return_value="502"):
-        mock_notifier.send_message.reset_mock()
-        alerts_sent_2 = service.process_statuscode_cycle()
-        assert alerts_sent_2 == 0
-        assert mock_notifier.send_message.call_count == 0
-
-    # Cycle 3: site recovers to 200 OK -> reset state
     with patch("statuscode.service.check_domain_status", return_value="200"):
-        service.process_statuscode_cycle()
-        state_recovered = json.loads(state_file.read_text(encoding="utf-8"))
-        assert state_recovered["broken-site.com"]["is_alerted"] is False
-        assert state_recovered["broken-site.com"]["last_alert_code"] == ""
+        updated_count = service.process_statuscode_cycle()
+        assert updated_count == 1
+        mock_sheet_manager.batch_update_rows.assert_called_once()
+        updates = mock_sheet_manager.batch_update_rows.call_args[0][0]
+        assert len(updates) == 1
+        assert updates[0].row_index == 2
+        assert updates[0].status_code == "200"
+
+        # Verify NO Telegram message was sent
+        mock_notifier.send_message.assert_not_called()
