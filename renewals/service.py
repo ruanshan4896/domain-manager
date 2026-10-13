@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, datetime, timezone
-from typing import Dict, List, Optional, Sequence
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
 
 from core.config import Config
 from core.notifier import TelegramNotifier
@@ -64,7 +66,7 @@ def should_trigger_alert(current_alert_status: str, target_stage: Optional[str])
     """Check if target alert stage is higher priority than current alert status.
 
     Args:
-        current_alert_status: Current status stored in sheet (e.g. 'PENDING', 'ALERT_0D').
+        current_alert_status: Current status stored in sheet or state (e.g. 'PENDING', 'ALERT_0D').
         target_stage: Newly calculated target stage (e.g. 'ALERT_0D', 'ALERT_EXPIRED').
 
     Returns:
@@ -88,6 +90,7 @@ class RenewalService:
         config: Config,
         sheet_manager: Optional[RenewalSheetManager] = None,
         notifier: Optional[TelegramNotifier] = None,
+        state_file: str = "alerts_state.json",
     ) -> None:
         self.config = config
         self.sheet_manager = sheet_manager or RenewalSheetManager(
@@ -99,6 +102,26 @@ class RenewalService:
             bot_token=config.telegram_bot_token,
             chat_id=config.telegram_chat_id,
         )
+        self.state_file = Path(state_file)
+
+    def _load_alert_state(self) -> Dict[str, Dict[str, Any]]:
+        """Load persistent alert states from JSON file."""
+        if not self.state_file.exists():
+            return {}
+        try:
+            with open(self.state_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as exc:
+            logger.warning("Error loading alert state from %s: %s", self.state_file, exc)
+            return {}
+
+    def _save_alert_state(self, state: Dict[str, Dict[str, Any]]) -> None:
+        """Save persistent alert states to JSON file."""
+        try:
+            with open(self.state_file, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            logger.error("Error saving alert state to %s: %s", self.state_file, exc)
 
     def process_renewal_cycle(self) -> int:
         """Check domain expiration dates and send renewal reminders.
@@ -112,22 +135,23 @@ class RenewalService:
             logger.info("No rows found in renewal sheet or failed to fetch.")
             return 0
 
-        active_rows = [r for r in rows if r.status in ("ACTIVE", "EXPIRED")]
-        logger.info("Fetched %d renewal row(s), %d currently ACTIVE/EXPIRED.", len(rows), len(active_rows))
+        active_rows = [r for r in rows if r.domain and not r.domain.startswith("#")]
+        logger.info("Fetched %d renewal row(s), %d active to process.", len(rows), len(active_rows))
 
         if not active_rows:
             return 0
 
+        alert_states = self._load_alert_state()
         updates: List[RenewalRowUpdate] = []
         alerts_sent = 0
+        state_changed = False
         today = datetime.now(timezone.utc).date()
 
         for row in active_rows:
-            domain = row.domain
-            owner = row.owner
+            domain = row.domain.strip()
             expiry_date = row.expiry_date
             expiry_date_str = row.expiry_date_str
-            registrar = row.registrar
+            registrar = ""
 
             # If Expiry Date is missing or unparsed, automatically lookup via RDAP & WHOIS!
             if not expiry_date:
@@ -136,8 +160,7 @@ class RenewalService:
                 if looked_up_date:
                     expiry_date = looked_up_date
                     expiry_date_str = looked_up_date.strftime("%Y-%m-%d")
-                    if not registrar and looked_up_reg:
-                        registrar = looked_up_reg
+                    registrar = looked_up_reg or ""
                     logger.info(
                         "Domain lookup success for '%s': Expiry = %s, Registrar = %s",
                         domain,
@@ -152,11 +175,7 @@ class RenewalService:
                     update = RenewalRowUpdate(
                         row_index=row.row_index,
                         expiry_date_str="",
-                        registrar=registrar,
-                        auto_renew=row.auto_renew,
                         days_left_str="Chưa tra cứu được (vui lòng tự nhập ngày)",
-                        alert_status=row.alert_status,
-                        status=row.status,
                     )
                     updates.append(update)
                     continue
@@ -164,59 +183,62 @@ class RenewalService:
             days_left = calculate_days_left(expiry_date, today)
             days_left_str = f"{days_left} ngày" if days_left >= 0 else f"Quá hạn {abs(days_left)} ngày"
 
+            domain_state = alert_states.get(domain, {})
+            last_stage = domain_state.get("last_alert_stage", "PENDING")
+            last_expiry = domain_state.get("expiry_date", "")
+
             target_stage = determine_alert_stage(days_left, self.config.renewal_alert_days)
-            new_alert_status = row.alert_status
-            new_status = row.status
 
-            if days_left < 0:
-                new_status = "EXPIRED"
-            elif days_left > 0:
-                new_status = "ACTIVE"
-
-            # Check if domain was renewed / extended (days_left > 0) -> reset alert to PENDING
-            if not target_stage:
-                if row.alert_status != "PENDING":
-                    logger.info(
-                        "Domain '%s' expiry extended (%d days left). Resetting alert status to PENDING.",
-                        row.domain,
-                        days_left,
-                    )
-                    new_alert_status = "PENDING"
-            else:
+            # Check if domain was renewed / extended -> reset alert status to PENDING
+            if (days_left > 0 and last_stage != "PENDING") or (last_expiry and expiry_date_str != last_expiry and days_left > 0):
+                logger.info(
+                    "Domain '%s' expiry extended (%d days left). Resetting alert status to PENDING.",
+                    domain,
+                    days_left,
+                )
+                domain_state["last_alert_stage"] = "PENDING"
+                domain_state["expiry_date"] = expiry_date_str
+                alert_states[domain] = domain_state
+                state_changed = True
+            elif target_stage:
                 # Check if we should trigger a new alert stage (ALERT_0D on day 0, ALERT_EXPIRED on day -1)
-                if should_trigger_alert(row.alert_status, target_stage):
+                if should_trigger_alert(last_stage, target_stage):
                     logger.warning(
-                        "Triggering renewal alert for %s: %d days left (stage: %s, owner: %s)",
-                        row.domain,
+                        "Triggering renewal alert for %s: %d days left (stage: %s)",
+                        domain,
                         days_left,
                         target_stage,
-                        owner,
                     )
                     sent = self.notifier.send_renewal_alert(
-                        domain=row.domain,
-                        owner=owner,
+                        domain=domain,
                         expiry_date_str=expiry_date_str,
                         days_left=days_left,
                         registrar=registrar,
-                        auto_renew=row.auto_renew,
+                        auto_renew="",
+                        owner="",
                     )
                     if sent:
                         alerts_sent += 1
-                        new_alert_status = target_stage
+                        domain_state["last_alert_stage"] = target_stage
+                        domain_state["expiry_date"] = expiry_date_str
+                        domain_state["last_alert_time"] = datetime.now(timezone.utc).isoformat()
+                        alert_states[domain] = domain_state
+                        state_changed = True
 
-            update = RenewalRowUpdate(
-                row_index=row.row_index,
-                expiry_date_str=expiry_date_str,
-                registrar=registrar,
-                auto_renew=row.auto_renew,
-                days_left_str=days_left_str,
-                alert_status=new_alert_status,
-                status=new_status,
-            )
-            updates.append(update)
+            # If days_left changed or expiry_date was filled, queue row update
+            if row.expiry_date_str != expiry_date_str or row.days_left_str != days_left_str:
+                update = RenewalRowUpdate(
+                    row_index=row.row_index,
+                    expiry_date_str=expiry_date_str,
+                    days_left_str=days_left_str,
+                )
+                updates.append(update)
 
         if updates:
             self.sheet_manager.batch_update_rows(updates)
+
+        if state_changed:
+            self._save_alert_state(alert_states)
 
         logger.info("Renewal check cycle completed. Sent %d alert(s).", alerts_sent)
         return alerts_sent

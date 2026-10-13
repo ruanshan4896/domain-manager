@@ -15,14 +15,9 @@ logger = logging.getLogger(__name__)
 
 # Expected standard headers in Row 1 for Domain Renewals worksheet
 EXPECTED_RENEWAL_HEADERS = [
-    "Domain",            # Col A (1)
-    "Owner / Telegram",  # Col B (2) - e.g. @username or username (manual)
-    "Expiry Date",       # Col C (3) - e.g. YYYY-MM-DD (Auto-filled by Bot or manual)
-    "Registrar",         # Col D (4) - e.g. Namecheap, Cloudflare (Auto-filled by Bot or manual)
-    "Auto Renew",        # Col E (5) - YES / NO
-    "Days Left",         # Col F (6) - Calculated remaining days
-    "Alert Status",      # Col G (7) - PENDING, ALERT_0D, ALERT_EXPIRED
-    "Status",            # Col H (8) - ACTIVE, PAUSED, RENEWED, EXPIRED
+    "Domain",       # Col A (1) - Domain to track
+    "Expiry Date",  # Col B (2) - Expiry date YYYY-MM-DD
+    "Days Left",    # Col C (3) - Remaining days text e.g. "15 ngày"
 ]
 
 SCOPES = [
@@ -37,68 +32,45 @@ class RenewalRow:
 
     row_index: int  # 1-indexed row number in the worksheet
     domain: str
-    owner: str
     expiry_date_str: str
     expiry_date: Optional[date]
-    registrar: str
-    auto_renew: str
     days_left_str: str
-    alert_status: str
-    status: str
 
     @classmethod
     def from_row_values(cls, row_index: int, values: List[str]) -> RenewalRow:
         """Parse raw row values from worksheet."""
-        padded = values + [""] * max(0, 8 - len(values))
+        padded = values + [""] * max(0, 3 - len(values))
 
         domain = padded[0].strip()
-        owner = padded[1].strip()
-        expiry_date_str = padded[2].strip()
+        expiry_date_str = padded[1].strip()
         expiry_date = parse_expiry_date(expiry_date_str)
-        registrar = padded[3].strip()
-        auto_renew = padded[4].strip().upper() if padded[4].strip() else "NO"
-        days_left_str = padded[5].strip()
-        alert_status = padded[6].strip().upper() if padded[6].strip() else "PENDING"
-        status = padded[7].strip().upper() if padded[7].strip() else "ACTIVE"
+        days_left_str = padded[2].strip()
 
         return cls(
             row_index=row_index,
             domain=domain,
-            owner=owner,
             expiry_date_str=expiry_date_str,
             expiry_date=expiry_date,
-            registrar=registrar,
-            auto_renew=auto_renew,
             days_left_str=days_left_str,
-            alert_status=alert_status,
-            status=status,
         )
 
 
 @dataclass
 class RenewalRowUpdate:
-    """Update payload for columns C to H (Expiry Date, Registrar, Auto Renew, Days Left, Alert Status, Status)."""
+    """Update payload for columns B to C (Expiry Date, Days Left)."""
 
     row_index: int
     expiry_date_str: str
-    registrar: str
-    auto_renew: str
     days_left_str: str
-    alert_status: str
-    status: str
 
     def to_range_payload(self) -> Dict[str, Any]:
-        """Convert to gspread batch_update range dictionary for columns C to H."""
+        """Convert to gspread batch_update range dictionary for columns B to C."""
         return {
-            "range": f"C{self.row_index}:H{self.row_index}",
+            "range": f"B{self.row_index}:C{self.row_index}",
             "values": [
                 [
                     self.expiry_date_str,
-                    self.registrar,
-                    self.auto_renew,
                     self.days_left_str,
-                    self.alert_status,
-                    self.status,
                 ]
             ],
         }
@@ -168,7 +140,7 @@ class RenewalSheetManager:
             if not first_row or first_row[: len(EXPECTED_RENEWAL_HEADERS)] != EXPECTED_RENEWAL_HEADERS:
                 logger.info("Initializing/updating headers in row 1 of '%s'.", self.worksheet_name)
                 self.worksheet.update(
-                    range_name="A1:H1",
+                    range_name="A1:C1",
                     values=[EXPECTED_RENEWAL_HEADERS],
                 )
         except Exception as exc:

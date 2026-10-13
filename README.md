@@ -31,35 +31,29 @@ domain-manager/
 
 ## 📌 Tính Năng Nổi Bật
 
-- 🔍 **Tra cứu tự động (Auto-Lookup):** Chỉ cần nhập tên miền vào tab `Domain_Renewals` (Cột A), bot tự động tra cứu ngày hết hạn và nhà đăng ký qua **Port 43 Socket WHOIS**, **RDAP (ICANN / CentralNic)** & **WHOIS.com**.
-- 👤 **Hỗ trợ Tag Chủ Sở Hữu (Telegram Mentions):** Thêm cột `Owner / Telegram` (Cột B), Bot tự động tag trực tiếp username của chủ tên miền khi đến hạn.
+- 🔍 **Tra cứu tự động (Auto-Lookup):** Chỉ cần nhập tên miền vào tab `Domain_Renewals` (Cột A), bot tự động tra cứu ngày hết hạn qua **Port 43 Socket WHOIS**, **RDAP (ICANN / CentralNic)** & **WHOIS.com**.
 - 🔔 **Cảnh báo đúng lúc (2 mốc chuẩn):**
   - **Lần 1:** Đúng ngày hết hạn (0 ngày còn lại).
   - **Lần 2:** Ngày hôm sau để nhắc nhở khẩn cấp (quá hạn 1 ngày).
   - **Nội dung thông báo:** 
-    `Tên miền {domain} của @{owner} đã hết hạn, @daudepzai gia hạn giúp anh với em`
+    `Tên miền {domain} đã hết hạn, @daudepzai gia hạn giúp anh với em`
 - ⚡ **Tối ưu Google Sheets API (Batch Operations):** Đọc toàn bộ danh sách và cập nhật các dòng thay đổi bằng batch update chỉ với 1 request duy nhất, không lo bị nghẽn quota.
-- 🔄 **Tự động Reset:** Khi bạn gia hạn thành công tên miền và ngày hết hạn mới được cập nhật, trạng thái cảnh báo tự động trở về `PENDING`.
+- 💾 **Lưu vết cảnh báo thông minh (Local State):** Quản lý trạng thái cảnh báo trong file nội bộ `alerts_state.json`, giữ Google Sheet sạch sẽ và tự động reset khi tên miền được gia hạn sang chu kỳ mới.
 
 ---
 
 ## 📊 Quy Tắc Thao Tác Trên Google Sheet
 
-Tab làm việc mặc định: **`Domain_Renewals`**
+Tab làm việc mặc định: **`Domain_Renewals`** (Tối giản 3 cột)
 
 | Cột | Tên Cột | Mô tả & Lưu ý |
 |---|---|---|
-| **A** | `Domain` | **Bắt buộc**: Tên miền cần theo dõi (ví dụ: `example.com`). |
-| **B** | `Owner / Telegram` | Username Telegram người sở hữu (ví dụ: `@username` hoặc `username`). Bot sẽ tag tên này khi gửi cảnh báo. |
-| **C** | `Expiry Date` | Ngày hết hạn định dạng `YYYY-MM-DD`. Bot tự động điền khi tra cứu được. Bạn có thể tự gõ tay nếu là đuôi tên miền đặc thù. |
-| **D** | `Registrar` | Nhà đăng ký (Namecheap, Cloudflare, GoDaddy...). Bot tự điền hoặc bạn tự nhập. |
-| **E** | `Auto Renew` | Trạng thái tự động gia hạn (`YES` hoặc `NO`). |
-| **F** | `Days Left` | Số ngày còn lại (Bot tự tính và hiển thị ví dụ: `15 ngày` hoặc `Quá hạn 1 ngày`). |
-| **G** | `Alert Status` | Trạng thái gửi cảnh báo (`PENDING`, `ALERT_0D`, `ALERT_EXPIRED`). |
-| **H** | `Status` | Trạng thái hoạt động: `ACTIVE`, `EXPIRED`, hoặc `PAUSED` (nếu đặt `PAUSED`, bot sẽ bỏ qua không kiểm tra). |
+| **A** | `Domain` | **Bắt buộc**: Tên miền cần theo dõi (ví dụ: `example.com`). Đặt dấu `#` ở đầu nếu muốn tạm ngưng (bỏ qua). |
+| **B** | `Expiry Date` | Ngày hết hạn định dạng `YYYY-MM-DD`. Bot tự động tra cứu điền vào hoặc bạn có thể tự nhập tay. |
+| **C** | `Days Left` | Số ngày còn lại (Bot tự tính và hiển thị ví dụ: `15 ngày` hoặc `Quá hạn 1 ngày`). |
 
 > [!TIP]
-> - **Cột I trở đi:** Bạn có thể tự do thêm cột (ghi chú, giá tiền gia hạn, thẻ thanh toán...) mà không ảnh hưởng tới code.
+> - **Cột D trở đi:** Bạn có thể tự do thêm cột riêng (ghi chú, nhà đăng ký, giá tiền gia hạn, thẻ thanh toán...) mà không ảnh hưởng tới hoạt động của bot.
 > - **Format hiển thị:** Thoải mái chỉnh màu nền, font chữ, độ rộng cột, viền bảng.
 
 ---
