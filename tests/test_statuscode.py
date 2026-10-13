@@ -26,25 +26,20 @@ def test_is_error_status():
     assert is_error_status("ERR") is True
 
 
-@patch("statuscode.checker.requests.get")
-def test_check_domain_status_success(mock_get):
-    """Verify checking a 200 OK domain with allow_redirects=False."""
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_get.return_value = mock_resp
+@patch("statuscode.checker._request_single_url")
+def test_check_domain_status_success(mock_req):
+    """Verify checking a 200 OK domain with HTTPS prioritization."""
+    mock_req.return_value = "200"
 
     code = check_domain_status("example.com")
     assert code == "200"
-    mock_get.assert_called_once()
-    assert mock_get.call_args[1].get("allow_redirects") is False
+    mock_req.assert_called_with("https://example.com", timeout=10)
 
 
-@patch("statuscode.checker.requests.get")
-def test_check_domain_status_redirect(mock_get):
+@patch("statuscode.checker._request_single_url")
+def test_check_domain_status_redirect(mock_req):
     """Verify initial 301 redirect status code is captured without following."""
-    mock_resp = MagicMock()
-    mock_resp.status_code = 301
-    mock_get.return_value = mock_resp
+    mock_req.return_value = "301"
 
     code = check_domain_status("redirectme.com")
     assert code == "301"
