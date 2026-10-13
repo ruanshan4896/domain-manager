@@ -68,13 +68,14 @@ def test_statuscode_row_update_payload():
 
 
 def test_statuscode_service_updates_sheet_without_telegram():
-    """Verify that StatusCodeService updates Google Sheet and sends NO Telegram messages."""
+    """Verify that StatusCodeService updates Google Sheet in real time and sends NO Telegram messages."""
     config = Config(
         google_service_account_file="nonexistent.json",
         google_sheet_name="Quản Lý Domain",
     )
 
     mock_sheet_manager = MagicMock()
+    mock_sheet_manager.update_single_row.return_value = True
     mock_notifier = MagicMock()
 
     mock_sheet_manager.fetch_all_rows.return_value = [
@@ -91,11 +92,7 @@ def test_statuscode_service_updates_sheet_without_telegram():
     with patch("statuscode.service.check_domain_status", return_value="200"):
         updated_count = service.process_statuscode_cycle()
         assert updated_count == 1
-        mock_sheet_manager.batch_update_rows.assert_called_once()
-        updates = mock_sheet_manager.batch_update_rows.call_args[0][0]
-        assert len(updates) == 1
-        assert updates[0].row_index == 2
-        assert updates[0].status_code == "200"
+        mock_sheet_manager.update_single_row.assert_called_once_with(2, "200")
 
         # Verify NO Telegram message was sent
         mock_notifier.send_message.assert_not_called()

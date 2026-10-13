@@ -119,7 +119,7 @@ class RenewalService:
         if not active_rows:
             return 0
 
-        updates: List[RenewalRowUpdate] = []
+        updated_count = 0
         today = datetime.now(timezone.utc).date()
 
         for row in active_rows:
@@ -150,31 +150,29 @@ class RenewalService:
                         domain,
                         msg,
                     )
-                    update = RenewalRowUpdate(
-                        row_index=row.row_index,
-                        expiry_date_str="",
-                        days_left_str=msg,
-                    )
-                    updates.append(update)
+                    if row.days_left_str != msg:
+                        logger.info("Real-time update: %s -> %s (Row %d)", domain, msg, row.row_index)
+                        if self.sheet_manager.update_single_row(row.row_index, "", msg):
+                            updated_count += 1
+                            row.days_left_str = msg
                     continue
 
             days_left = calculate_days_left(expiry_date, today)
             days_left_str = f"{days_left} ngày" if days_left >= 0 else f"Quá hạn {abs(days_left)} ngày"
 
-            # If days_left changed or expiry_date was filled, queue row update
+            # If days_left changed or expiry_date was filled, update Google Sheet immediately in real time
             if row.expiry_date_str != expiry_date_str or row.days_left_str != days_left_str:
-                update = RenewalRowUpdate(
-                    row_index=row.row_index,
-                    expiry_date_str=expiry_date_str,
-                    days_left_str=days_left_str,
+                logger.info(
+                    "Real-time update: %s -> Expiry: %s, Days Left: %s (Row %d)",
+                    domain,
+                    expiry_date_str,
+                    days_left_str,
+                    row.row_index,
                 )
-                updates.append(update)
+                if self.sheet_manager.update_single_row(row.row_index, expiry_date_str, days_left_str):
+                    updated_count += 1
+                    row.expiry_date_str = expiry_date_str
+                    row.days_left_str = days_left_str
 
-        if updates:
-            self.sheet_manager.batch_update_rows(updates)
-            logger.info("Updated %d domain renewal row(s) on Google Sheet.", len(updates))
-        else:
-            logger.info("All domain renewals are up to date on Google Sheet.")
-
-        logger.info("Renewal check cycle completed.")
-        return len(updates)
+        logger.info("Renewal check cycle completed. Real-time updated %d row(s).", updated_count)
+        return updated_count

@@ -61,36 +61,28 @@ class StatusCodeService:
         if not active_rows:
             return 0
 
-        updates: List[StatusCodeRowUpdate] = []
+        updated_count = 0
 
-        # Run HTTP checks concurrently
-        check_results: Dict[str, str] = {}
+        # Run HTTP checks concurrently and update Google Sheet immediately in real time
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_domain = {
-                executor.submit(check_domain_status, r.domain): r.domain
+            future_to_row = {
+                executor.submit(check_domain_status, r.domain): r
                 for r in active_rows
             }
-            for future in as_completed(future_to_domain):
-                d = future_to_domain[future]
+            for future in as_completed(future_to_row):
+                row = future_to_row[future]
                 try:
-                    check_results[d] = future.result()
+                    code = future.result()
                 except Exception as exc:
-                    logger.debug("Error checking domain %s: %s", d, exc)
-                    check_results[d] = "ERR"
+                    logger.debug("Error checking domain %s: %s", row.domain, exc)
+                    code = "ERR"
 
-        for row in active_rows:
-            domain = row.domain
-            code = check_results.get(domain, "ERR")
+                # Update Google Sheet cell in real time if status code changed or was empty
+                if row.status_code != code:
+                    logger.info("Real-time update: %s -> %s (Row B%d)", row.domain, code, row.row_index)
+                    if self.sheet_manager.update_single_row(row.row_index, code):
+                        updated_count += 1
+                        row.status_code = code
 
-            # Queue sheet update if code changed or was empty
-            if row.status_code != code:
-                updates.append(StatusCodeRowUpdate(row_index=row.row_index, status_code=code))
-
-        if updates:
-            self.sheet_manager.batch_update_rows(updates)
-            logger.info("Updated %d domain status code(s) on Google Sheet.", len(updates))
-        else:
-            logger.info("All domain status codes are up to date on Google Sheet.")
-
-        logger.info("Statuscode check cycle finished.")
-        return len(updates)
+        logger.info("Statuscode check cycle finished. Real-time updated %d row(s).", updated_count)
+        return updated_count

@@ -33,14 +33,15 @@ def test_determine_alert_stage():
     assert determine_alert_stage(30) is None
 
 
-def test_service_updates_sheet_without_telegram():
-    """Verify that renewal service updates Google Sheet and sends NO Telegram notifications."""
+def test_service_updates_sheet_in_real_time_without_telegram():
+    """Verify that renewal service updates Google Sheet in real time and sends NO Telegram notifications."""
     config = Config(
         google_service_account_file="nonexistent.json",
         google_sheet_name="Quản Lý Domain",
     )
 
     mock_sheet_manager = MagicMock()
+    mock_sheet_manager.update_single_row.return_value = True
     mock_notifier = MagicMock()
 
     today = date.today()
@@ -65,25 +66,22 @@ def test_service_updates_sheet_without_telegram():
 
     updated_count = service.process_renewal_cycle()
     assert updated_count == 1
-    mock_sheet_manager.batch_update_rows.assert_called_once()
-    updates = mock_sheet_manager.batch_update_rows.call_args[0][0]
-    assert len(updates) == 1
-    assert updates[0].row_index == 2
-    assert updates[0].days_left_str == "15 ngày"
+    mock_sheet_manager.update_single_row.assert_called_once_with(2, exp_date_str, "15 ngày")
 
     # Verify NO Telegram alert was called
     mock_notifier.send_message.assert_not_called()
     mock_notifier.send_renewal_alert.assert_not_called()
 
 
-def test_service_auto_lookups_missing_date():
-    """Verify missing expiry date triggers RDAP/WHOIS lookup and updates Google Sheet."""
+def test_service_auto_lookups_missing_date_real_time():
+    """Verify missing expiry date triggers RDAP/WHOIS lookup and updates Google Sheet in real time."""
     config = Config(
         google_service_account_file="nonexistent.json",
         google_sheet_name="Quản Lý Domain",
     )
 
     mock_sheet_manager = MagicMock()
+    mock_sheet_manager.update_single_row.return_value = True
 
     mock_sheet_manager.fetch_all_rows.return_value = [
         RenewalRow(
@@ -104,10 +102,10 @@ def test_service_auto_lookups_missing_date():
     with patch("renewals.service.lookup_domain_info", return_value=(looked_up, "Namecheap")):
         updated_count = service.process_renewal_cycle()
         assert updated_count == 1
-        mock_sheet_manager.batch_update_rows.assert_called_once()
-        updates = mock_sheet_manager.batch_update_rows.call_args[0][0]
-        assert updates[0].row_index == 3
-        assert updates[0].expiry_date_str == "2027-05-20"
+        mock_sheet_manager.update_single_row.assert_called_once()
+        args = mock_sheet_manager.update_single_row.call_args[0]
+        assert args[0] == 3
+        assert args[1] == "2027-05-20"
 
 
 def test_service_skip_commented_domains():
@@ -135,4 +133,4 @@ def test_service_skip_commented_domains():
 
     updated_count = service.process_renewal_cycle()
     assert updated_count == 0
-    mock_sheet_manager.batch_update_rows.assert_not_called()
+    mock_sheet_manager.update_single_row.assert_not_called()

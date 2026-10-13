@@ -182,6 +182,33 @@ class RenewalSheetManager:
             self.worksheet = None
             return []
 
+    def update_single_row(self, row_index: int, expiry_date_str: str, days_left_str: str) -> bool:
+        """Update a single domain's renewal info (Columns B:C) immediately in real time.
+
+        Args:
+            row_index: 1-indexed row number.
+            expiry_date_str: Formatted expiration date string (YYYY-MM-DD).
+            days_left_str: Remaining days string (e.g. '15 ngày').
+
+        Returns:
+            bool: True if update succeeded, False otherwise.
+        """
+        if not self.worksheet:
+            if not self.connect():
+                return False
+
+        try:
+            self.worksheet.update(
+                values=[[expiry_date_str, days_left_str]],
+                range_name=f"B{row_index}:C{row_index}",
+                value_input_option="USER_ENTERED",
+            )
+            return True
+        except Exception as exc:
+            logger.error("Error updating renewal row B%d:C%d: %s", row_index, row_index, exc)
+            self.worksheet = None
+            return False
+
     def batch_update_rows(self, updates: List[RenewalRowUpdate]) -> bool:
         """Batch update modified renewal rows in a single API call to save quota.
 

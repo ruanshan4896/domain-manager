@@ -146,6 +146,32 @@ class StatusCodeSheetManager:
             self.worksheet = None
             return []
 
+    def update_single_row(self, row_index: int, status_code: str) -> bool:
+        """Update a single domain's status code in Column B immediately in real time.
+
+        Args:
+            row_index: 1-indexed row number.
+            status_code: HTTP status code string (e.g. '200', '301').
+
+        Returns:
+            bool: True if update succeeded, False otherwise.
+        """
+        if not self.worksheet:
+            if not self.connect():
+                return False
+
+        try:
+            self.worksheet.update(
+                values=[[status_code]],
+                range_name=f"B{row_index}",
+                value_input_option="USER_ENTERED",
+            )
+            return True
+        except Exception as exc:
+            logger.error("Error updating status code for row B%d: %s", row_index, exc)
+            self.worksheet = None
+            return False
+
     def batch_update_rows(self, updates: List[StatusCodeRowUpdate]) -> bool:
         """Batch update modified statuscode rows in a single API call."""
         if not updates:
