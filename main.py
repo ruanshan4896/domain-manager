@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from core.config import Config, load_config, setup_logging, validate_config
 from core.notifier import TelegramNotifier
 from renewals.service import RenewalService
+from statuscode.service import StatusCodeService
 
 logger = logging.getLogger("renewal_tracker.main")
 
@@ -28,7 +29,7 @@ def signal_handler(signum: int, frame: object) -> None:
 
 
 class AppOrchestrator:
-    """Orchestrator managing the Domain Renewal Reminder service."""
+    """Orchestrator managing Domain Renewal reminders and HTTP Statuscode checks."""
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -40,8 +41,13 @@ class AppOrchestrator:
             config=config,
             notifier=self.notifier,
         )
+        self.statuscode_service = StatusCodeService(
+            config=config,
+            notifier=self.notifier,
+        )
         self.last_renewal_check_date = None
         self.last_renewal_check_time: float = 0.0
+        self.last_statuscode_check_time: float = 0.0
 
     @property
     def renewal_manager(self):
@@ -56,15 +62,24 @@ class AppOrchestrator:
         """
         return self.renewal_service.process_renewal_cycle()
 
+    def process_statuscode_cycle(self) -> int:
+        """Run a single HTTP statuscode check cycle.
+
+        Returns:
+            int: Number of statuscode error alerts sent.
+        """
+        return self.statuscode_service.process_statuscode_cycle()
+
     def run_forever(self) -> None:
         """Execute continuous 24/7 daemon loop."""
-        logger.info("Starting Domain Renewal Tracker daemon...")
+        logger.info("Starting Domain Renewal & Statuscode Tracker daemon...")
 
         while RUNNING:
             try:
                 today_utc = datetime.now(timezone.utc).date()
                 now_ts = time.time()
 
+                # 1. Daily Domain Renewal check cycle
                 if self.last_renewal_check_date != today_utc or (
                     now_ts - self.last_renewal_check_time >= self.config.renewal_check_interval_seconds
                 ):
@@ -75,11 +90,23 @@ class AppOrchestrator:
                     self.last_renewal_check_date = today_utc
                     self.last_renewal_check_time = now_ts
 
-                sleep_duration = min(3600, self.config.renewal_check_interval_seconds)
+                # 2. Periodic HTTP Statuscode check cycle (every 10 minutes by default)
+                if (
+                    self.last_statuscode_check_time == 0.0
+                    or now_ts - self.last_statuscode_check_time >= self.config.statuscode_check_interval_seconds
+                ):
+                    try:
+                        self.process_statuscode_cycle()
+                    except Exception as sc_err:
+                        logger.error("Error during HTTP statuscode check: %s", sc_err, exc_info=True)
+                    self.last_statuscode_check_time = now_ts
+
+                # Sleep in short increments, checking every 60s
+                sleep_duration = min(60, self.config.statuscode_check_interval_seconds)
                 self._sleep_interruptible(sleep_duration)
 
             except Exception as exc:
-                logger.error("Unexpected error in renewal daemon cycle: %s", exc, exc_info=True)
+                logger.error("Unexpected error in daemon cycle: %s", exc, exc_info=True)
                 self._sleep_interruptible(15)
 
         logger.info("Tracker daemon stopped gracefully.")
@@ -96,7 +123,7 @@ class AppOrchestrator:
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="Domain Renewal Reminder Manager with Google Sheets and Telegram Alerts."
+        description="Domain Renewal & HTTP Statuscode Manager with Google Sheets and Telegram Alerts."
     )
     parser.add_argument(
         "--env",
@@ -107,7 +134,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--once",
         action="store_true",
-        help="Run a single renewal check cycle then exit",
+        help="Run both renewal and statuscode cycles once then exit",
+    )
+    parser.add_argument(
+        "--check-statuscode",
+        action="store_true",
+        help="Run a single statuscode check cycle and exit",
     )
     parser.add_argument(
         "--test-telegram",
@@ -148,7 +180,7 @@ def main() -> None:
     if args.test_telegram:
         logger.info("Testing Telegram connection...")
         success = orchestrator.notifier.send_message(
-            "🔔 <b>Domain Renewal Tracker:</b> Kiểm tra kết nối Telegram Bot thành công! 🚀"
+            "🔔 <b>Domain Manager:</b> Kiểm tra kết nối Telegram Bot thành công! 🚀"
         )
         if success:
             logger.info("Telegram test message sent successfully.")
@@ -157,9 +189,16 @@ def main() -> None:
             logger.error("Failed to send Telegram test message.")
             sys.exit(1)
 
+    if args.check_statuscode:
+        logger.info("Running single HTTP statuscode check (--check-statuscode)...")
+        orchestrator.process_statuscode_cycle()
+        logger.info("Statuscode check finished.")
+        return
+
     if args.once:
         logger.info("Running in single-cycle mode (--once)...")
         orchestrator.process_renewal_cycle()
+        orchestrator.process_statuscode_cycle()
         logger.info("Cycle finished.")
         return
 

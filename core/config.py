@@ -35,6 +35,8 @@ class Config:
     google_renewal_worksheet_name: str = "Domain_Renewals"
     renewal_check_interval_seconds: int = 86400
     renewal_alert_days: tuple = (30, 14, 7, 3, 1, 0)
+    google_statuscode_worksheet_name: str = "Statuscode"
+    statuscode_check_interval_seconds: int = 600
 
     @property
     def is_configured(self) -> bool:
@@ -80,6 +82,19 @@ def load_config(env_path: Optional[str | Path] = None) -> Config:
     raw_alert_days = os.getenv("RENEWAL_ALERT_DAYS", "30,14,7,3,1,0")
     renewal_alert_days = tuple(parse_alert_days(raw_alert_days))
 
+    google_statuscode_worksheet_name = os.getenv(
+        "GOOGLE_STATUSCODE_WORKSHEET_NAME", "Statuscode"
+    ).strip()
+    if not google_statuscode_worksheet_name:
+        google_statuscode_worksheet_name = "Statuscode"
+
+    try:
+        statuscode_check_interval_seconds = int(
+            os.getenv("STATUSCODE_CHECK_INTERVAL_SECONDS", "600").strip()
+        )
+    except ValueError:
+        statuscode_check_interval_seconds = 600
+
     return Config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
@@ -92,6 +107,8 @@ def load_config(env_path: Optional[str | Path] = None) -> Config:
         google_renewal_worksheet_name=google_renewal_worksheet_name,
         renewal_check_interval_seconds=renewal_check_interval_seconds,
         renewal_alert_days=renewal_alert_days,
+        google_statuscode_worksheet_name=google_statuscode_worksheet_name,
+        statuscode_check_interval_seconds=statuscode_check_interval_seconds,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper().strip(),
     )
 

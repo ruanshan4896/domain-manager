@@ -4,6 +4,7 @@
 # Google Service Account Credentials & Local State
 service_account.json
 alerts_state.json
+statuscode_state.json
 
 # Python
 __pycache__/
